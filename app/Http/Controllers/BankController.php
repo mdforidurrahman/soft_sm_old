@@ -1,0 +1,155 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\BankAccount;
+use App\Models\Store;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Yajra\DataTables\DataTables;
+
+class BankController extends Controller
+{
+	/**
+	 * Display a listing of the resource.
+	 */
+public function index() {
+    $user = Auth::user(); // Get the authenticated user
+
+    // Check the role of the authenticated user
+    if ($user->hasRole('admin')) {
+        // Admins can view all bank accounts and stores
+        $stores = Store::latest()->get();
+        $data = BankAccount::with('store')->latest();
+    } elseif ($user->hasRole('manager')) {
+        // Managers can view only their own stores and bank accounts
+        $stores = $user->stores;
+        $data = BankAccount::whereIn('store_id', $stores->pluck('id'))->with('store')->latest();
+    } else {
+        // If the user has no specific role, restrict access
+        return response()->json(['error' => 'Unauthorized access'], 403);
+    }
+
+    // Handle AJAX request for DataTables
+    if (request()->ajax()) {
+        return DataTables::of($data)
+            ->addIndexColumn()
+            ->addColumn('store', function ($row) {
+                return $row->store->name;
+            })
+            ->addColumn('status', function ($row) {
+                return view('components.status-toggle', [
+                    'id' => $row->id,
+                    'model' => 'bankAccount',
+                    'status' => $row->status
+                ])->render();
+            })
+            ->addColumn('action', function ($row) {
+                return view('components.action-buttons', [
+                    'id' => $row->id,
+                    'model' => 'bankAccount',
+                    'editModal' => 'editModal',
+                    'editModalRoute' => 'banks.edit',
+                    'deleteRoute' => 'banks.destroy',
+                ])->render();
+            })
+            ->rawColumns(['action', 'status'])
+            ->make(true);
+    }
+
+    // Return the view for the bank accounts page
+    return view('admin.bank.index', compact('stores'));
+}
+
+	/**
+	 * Show the form for creating a new resource.
+	 */
+	public function create() {
+		//
+	}
+
+	/**
+	 * Store a newly created resource in storage.
+	 */
+	public function store(Request $request) {
+		try {
+			$request->validate([
+				'store_id' => 'required|exists:stores,id',
+				'bank_name' => 'required|string|max:255',
+				'account_holder_name' => 'required|string|max:255',
+				'account_number' => 'required|string|max:255|unique:bank_accounts,account_number',
+				'current_balance' => 'required|numeric|min:0',
+			]);
+
+			DB::beginTransaction();
+
+			$data = BankAccount::create($request->all());
+			DB::commit();
+
+			return $this->success(['id' => $data->id], 'Bank Account created successfully');
+		} catch (\Exception $e) {
+			DB::rollBack();
+
+			return $this->error('Something Went Wrong : ', $e->getMessage(), 500);
+		}
+	}
+
+	/**
+	 * Display the specified resource.
+	 */
+	public function show(string $id) {
+		//
+	}
+
+	/**
+	 * Show the form for editing the specified resource.
+	 */
+	public function edit(string $id) {
+		$store = BankAccount::findOrFail($id);
+		return response()->json($store);
+	}
+
+	/**
+	 * Update the specified resource in storage.
+	 */
+	public function update(Request $request, string $id) {
+		try {
+			$request->validate([
+				'store_id' => 'required|exists:stores,id',
+				'bank_name' => 'required|string|max:255',
+				'account_holder_name' => 'required|string|max:255',
+				'account_number' => 'required|string|max:255|unique:bank_accounts,account_number,' . $id,
+				'current_balance' => 'required|numeric|min:0',
+			]);
+
+			$bank = BankAccount::findOrFail($id);
+			$bank->update($request->all());
+			DB::commit();
+
+			return $this->success(['id' => $bank->id], 'Bank Updated successfully');
+		} catch (\Exception $exception) {
+			return $this->error('Something went wrong' . $exception->getMessage());
+		}
+	}
+
+	/**
+	 * Remove the specified resource from storage.
+	 */
+	public function destroy(string $id) {
+		try {
+			$bank = BankAccount::findOrFail($id);
+			DB::beginTransaction();
+
+			$bank->delete();
+
+			DB::commit();
+			return response()->json([
+				'success' => true,
+				'message' => 'Bank deleted successfully'
+			]);
+		} catch (\Exception $exception) {
+			return $this->error('Something went wrong' . $exception->getMessage());
+		}
+	}
+}

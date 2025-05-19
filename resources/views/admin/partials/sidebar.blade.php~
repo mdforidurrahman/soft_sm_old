@@ -1,0 +1,327 @@
+@php
+	// $role = auth()->user()->roles()->first()->name ?? 'guest';
+	$role = auth()->user()?->roles()?->first()?->name ?? 'admin';
+@endphp
+
+@auth
+	<div class="sidebar-wrapper" data-simplebar="true">
+		<div class="sidebar-header">
+			<div>
+				<img src="{{ asset('site/logo.png') }}" class="logo-ic w-75" alt="logo icon">
+			</div>
+			<div class="toggle-icon ms-auto"><i class='bx bx-arrow-to-left'></i></div>
+		</div>
+		<!--navigation-->
+		<ul class="metismenu" id="menu">
+			@permission('dashboard_view')
+			<li>
+				<a href="{{ route($role . '.dashboard') }}" class="mt-2">
+					<div class="parent-icon"><i class='bx bx-grid-alt'></i></div>
+					<div class="menu-title">Dashboard</div>
+				</a>
+			</li>
+			<hr>
+			@endpermission
+
+			@permission('store_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-store-alt"></i></div>
+					<div class="menu-title">Stores</div>
+				</a>
+				<ul>
+					@permission('store_view')
+					<li>
+						<a href="{{ route($role . '.stores.index') }}"><i class="bx bx-list-ul"></i>
+							Store List
+						</a>
+					</li>
+					@endpermission
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('stock_transfer_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-transfer"></i></div>
+					<div class="menu-title">Stock Transfer</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ route($role . '.product-transfers.index') }}"><i class="bx bx-list-ul"></i>
+							Store List
+						</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('pos_view_Not_Visible')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-cart-alt"></i></div>
+					<div class="menu-title">Point of Sale</div>
+				</a>
+				<ul>
+					@permission('pos_view')
+					<li>
+						<a href="{{ route($role . '.pos.index') }}"><i class="bx bx-desktop"></i> POS Dashboard</a>
+					</li>
+					@endpermission
+					@permission('pos_report_view')
+					<li>
+						<a href="{{ route($role . '.pos.report') }}"><i class="bx bx-bar-chart-alt-2"></i> Report</a>
+					</li>
+					@endpermission
+
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('contact_view|customer_view|supplier_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-group"></i></div>
+					<div class="menu-title">
+						Contacts
+					</div>
+				</a>
+				<ul>
+					@permission('contact_view')
+		
+					@endpermission
+
+					@permission('customer_view')
+					<li>
+						<a href="{{ url($role . '/customers') }}"><i class="bx bx-user-pin"></i>
+							Customers List
+						</a>
+					</li>
+					@endpermission
+
+					@permission('supplier_view')
+					<li>
+						<a href="{{ url($role . '/supplier') }}"><i class="bx bx-laptop"></i>
+							Supplier List
+						</a>
+					</li>
+					@endpermission
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('sell_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-money"></i></div>
+					<div class="menu-title">
+						Sells
+					</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ route($role . '.sell.index') }}"><i class="bx bx-list-ul"></i>
+							Sell List
+						</a>
+					</li>
+					<li>
+						<a href="{{ route($role . '.sells.return.index') }}"><i class="bx bx-undo"></i>
+							Return Sells List
+						</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('purchase_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-shopping-bag"></i></div>
+					<div class="menu-title">
+						Purchase
+					</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ route($role . '.purchase.index') }}"><i class="bx bx-list-ul"></i>
+							Purchase List
+						</a>
+					</li>
+
+					<li>
+						<a href="{{ route($role . '.purchase.return.index') }}"><i class="bx bx-undo"></i>
+							Return Purchase List
+						</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('product_category_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-tag-alt"></i></div>
+					<div class="menu-title">Product Category</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ route($role . '.product-category.index') }}"><i class="bx bx-list-ul"></i>
+							Product Category List
+						</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('product_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-package"></i></div>
+					<div class="menu-title">Product</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ route($role . '.product.index') }}"><i class="bx bx-list-ul"></i>
+							Product List
+						</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('expense_view|expense_category_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-dollar-circle"></i></div>
+					<div class="menu-title">Expense</div>
+				</a>
+				<ul>
+					@permission('expense_view')
+					<li>
+						<a href="{{ route($role . '.expense.index') }}"><i class="bx bx-receipt"></i> Expenses</a>
+					</li>
+					@endpermission
+
+					@permission('expense_category_view')
+					<li>
+						<a href="{{ route($role . '.expensecategory.addcategory') }}"><i class="bx bx-category"></i>
+							Expense
+							Category</a>
+					</li>
+					@endpermission
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('expense_report_view|profit_loss_report_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-pie-chart-alt-2"></i></div>
+					<div class="menu-title">Report</div>
+				</a>
+				<ul>
+					@permission('expense_report_view')
+					<li>
+						<a href="{{ route($role . '.report.index') }}"><i class="bx bx-bar-chart-alt-2"></i> Expense
+						                                                                                     Reports</a>
+					</li>
+					@endpermission
+
+					@permission('profit_loss_report_view')
+					<li>
+						<a href="{{ route($role . '.reports.profit-loss') }}"><i class="bx bx-line-chart"></i>
+							Profit/Loss
+							Reports</a>
+					</li>
+					<li>
+						<a href="{{ route($role . '.report.sells') }}"><i class="bx bx-money"></i> Sell
+						                                                                           Reports</a>
+					</li>
+					@endpermission
+				</ul>
+			</li>
+			@endpermission
+
+			<li class="menu-label">Settings</li>
+
+			@permission('role_assignment_manage')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-shield"></i></div>
+					<div class="menu-title">Settings</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ url('/laratrust') }}"><i class="bx bx-user-check"></i>Role Assignment</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('business_location_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-buildings"></i></div>
+					<div class="menu-title">Business Location</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ route($role . '.business-location.index') }}"><i class="bx bx-map-pin"></i>
+							Business Location
+						</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+
+			@permission('user_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-user-circle"></i></div>
+					<div class="menu-title">Users</div>
+				</a>
+				<ul>
+					@permission('user_view')
+					<li>
+						<a href="{{ route($role . '.user.index') }}"><i class="bx bx-list-ul"></i>List of
+						                                                                          Users</a>
+					</li>
+					@endpermission
+
+					@permission('user_create')
+
+					@endpermission
+				</ul>
+			</li>
+			@endpermission
+
+			{{--            @permission('account_view')--}}
+			@permission('user_view')
+			<li>
+				<a href="javascript:;" class="has-arrow">
+					<div class="parent-icon"><i class="bx bx-user-circle"></i></div>
+					<div class="menu-title">Accounts</div>
+				</a>
+				<ul>
+					<li>
+						<a href="{{ route($role . '.account-transactions.index') }}"><i class="bx bx-list-ul"></i>
+							Account Transaction
+						</a>
+					</li>
+					<li>
+						<a href="{{ route($role . '.banks.index') }}"><i class="bx bx-list-ul"></i>
+							Banks
+						</a>
+					</li>
+					<li>
+						<a href="{{ route($role . '.withdrawals.index') }}"><i class="bx bx-list-ul"></i>
+							WithDrawal
+						</a>
+					</li>
+				</ul>
+			</li>
+			@endpermission
+		</ul>
+	</div>
+@endauth

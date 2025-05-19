@@ -1,0 +1,491 @@
+@extends('layouts.admin')
+@section('title', 'Withdrawal List')
+
+@push('style')
+	@include('import.css.datatable')
+@endpush
+
+@section('content')
+	<x-breadcumb title="Withdrawal List"/>
+	<div class="table-responsive">
+		<div class="dashboard-card">
+			<div class="card-header-section">
+				<div class="table-title-section">
+					<div class="table-icon">
+						<i class="fas fa-money-bill-wave"></i>
+					</div>
+					<h5 class="table-title">Withdrawals Overview</h5>
+				</div>
+				<div class="header-actions">
+					<button type="button" class="btn btn-primary" data-bs-toggle="modal"
+					        data-bs-target="#withdrawalModal">
+						Create New Withdrawal
+					</button>
+				</div>
+			</div>
+			<div class="table-responsive">
+				<table id="withdrawalsTable" class="table table-hover">
+					<thead>
+					<tr>
+						<th>SL</th>
+						<th>Date</th>
+						<th>Store</th>
+						<th>Bank Account</th>
+						<th>Amount</th>
+						<th>Description</th>
+						<th>Action</th>
+					</tr>
+					</thead>
+					<tbody>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+	{{-- Add Modal --}}
+	<div class="modal fade" id="withdrawalModal" tabindex="-1" aria-labelledby="withdrawalModalLabel"
+	     aria-hidden="true">
+		<div class="modal-dialog modal-dialog-centered">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="withdrawalModalLabel">Create New Withdrawal</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<form id="withdrawalForm">
+						@csrf
+						<div class="mb-3">
+							<label for="store_id" class="form-label">Store</label>
+							<select class="form-control" id="store_id" name="store_id" required>
+								<option value="">Select Store</option>
+								@foreach($stores as $store)
+									<option value="{{ $store->id }}"
+									        data-balance="{{ $store->account->current_balance ?? 0 }}">
+										{{ $store->name }}
+										(Balance: {{ number_format($store->account->current_balance ?? 0, 2) }})
+									</option>
+								@endforeach
+							</select>
+						</div>
+						<div class="mb-3">
+							<label for="bank_account_id" class="form-label">Bank Account</label>
+							<select class="form-control" id="bank_account_id" name="bank_account_id" required>
+								<option value="">Select Bank Account</option>
+							</select>
+						</div>
+						<div class="mb-3">
+							<label for="amount" class="form-label">Amount</label>
+							<input type="number" step="0.01" class="form-control" id="amount" name="amount" required>
+							<small class="text-muted" id="balanceInfo">Available balance: 0.00</small>
+						</div>
+						<div class="mb-3">
+							<label for="description" class="form-label">Description</label>
+							<textarea class="form-control" id="description" name="description" rows="3"></textarea>
+						</div>
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+					<button type="button" class="btn btn-primary" onclick="submitWithdrawal()">Create Withdrawal
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	{{-- Edit Modal --}}
+	<div class="modal fade" id="editWithdrawalModal" tabindex="-1" aria-labelledby="editWithdrawalModalLabel"
+	     aria-hidden="true">
+		<div class="modal-dialog modal-dialog-centered">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="editWithdrawalModalLabel">Edit Withdrawal</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<form id="editWithdrawalForm">
+						@csrf
+						@method('PUT')
+						<input type="hidden" id="editWithdrawalId" name="id">
+						<div class="mb-3">
+							<label for="editStoreId" class="form-label">Store</label>
+							<select class="form-control" id="editStoreId" name="store_id">
+								@foreach($stores as $store)
+									<option value="{{ $store->id }}" data-balance="{{ $store->account->current_balance ?? 0 }}">
+										{{ $store->name }} (Balance: {{ number_format($store->account->current_balance ?? 0, 2) }})
+									</option>
+								@endforeach
+							</select>
+						</div>
+						<div class="mb-3">
+							<label for="editBankAccountId" class="form-label">Bank Account</label>
+							<select class="form-control" id="editBankAccountId" name="bank_account_id" required>
+								@foreach($bankAccounts as $account)
+									<option value="{{ $account->id }}">
+										{{ $account->name }}({{ $account->account_number }})
+									</option>
+								@endforeach
+							</select>
+						</div>
+						<div class="mb-3">
+							<label for="editAmount" class="form-label">Amount</label>
+							<input type="number" step="0.01" class="form-control" id="editAmount" name="amount"
+							       required>
+							<small class="text-muted" id="editBalanceInfo">Available balance: 0.00</small>
+						</div>
+						<div class="mb-3">
+							<label for="editDescription" class="form-label">Description</label>
+							<textarea class="form-control" id="editDescription" name="description" rows="3"></textarea>
+						</div>
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+					<button type="button" class="btn btn-primary" onclick="updateWithdrawal()">Update Withdrawal
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+@endsection
+
+@push('script')
+	@include('import.js.datatable')
+
+	<script>
+        $(document).ready(function () {
+            $('#store_id').change(function () {
+                const storeId = $(this).val();
+                const balance = $(this).find(':selected').data('balance');
+                $('#balanceInfo').text(`Available balance: ${parseFloat(balance).toFixed(2)}`);
+
+                if (storeId) {
+                    $.ajax({
+                        url: "{{ route($role.'withdrawals.bank-accounts', '') }}/" + storeId,
+                        method: 'GET',
+                        success: function (response) {
+                            const bankSelect = $('#bank_account_id');
+                            bankSelect.empty();
+                            bankSelect.append('<option value="">Select Bank Account</option>');
+
+                            response.bank_accounts.forEach(function (account) {
+                                bankSelect.append(
+                                    `<option value="${account.id}">${account.bank_name} (${account.account_number})</option>`
+                                );
+                            });
+                        }
+                    });
+                }
+            });
+
+            $('#editStoreId').change(function () {
+                const storeId = $(this).val();
+                const balance = $(this).find(':selected').data('balance');
+                $('#editBalanceInfo').text(`Available balance: ${parseFloat(balance).toFixed(2)}`);
+
+                if (storeId) {
+                    $.ajax({
+                        url: "{{ route($role.'withdrawals.bank-accounts', '') }}/" + storeId,
+                        method: 'GET',
+                        success: function (response) {
+                            const bankSelect = $('#editBankAccountId');
+                            bankSelect.empty();
+                            bankSelect.append('<option value="">Select Bank Account</option>');
+
+                            response.bank_accounts.forEach(function (account) {
+                                bankSelect.append(
+                                    `<option value="${account.id}">${account.bank_name} (${account.account_number})</option>`
+                                );
+                            });
+                        }
+                    });
+                }
+            });
+
+            loadWithdrawalsTable();
+        });
+
+
+        $('#amount').on('input', function () {
+            const selectedStore = $('#store_id option:selected');
+            const maxAmount = parseFloat(selectedStore.data('balance')) || 0;
+            const enteredAmount = parseFloat($(this).val()) || 0;
+
+            if (enteredAmount > maxAmount) {
+                $(this).val(maxAmount.toFixed(2));
+                AjaxNotifications.error('Amount cannot exceed available balance');
+            }
+        });
+
+        $('#editAmount').on('input', function() {
+            const selectedStore = $('#editStoreId option:selected');
+            const maxAmount = parseFloat(selectedStore.data('balance')) || 0;
+            const enteredAmount = parseFloat($(this).val()) || 0;
+
+            if (enteredAmount > maxAmount) {
+                $(this).val(maxAmount.toFixed(2));
+                AjaxNotifications.error('Amount cannot exceed available balance');
+            }
+        });
+
+        function validateWithdrawalAmount(amountInputId, balanceInfoId) {
+            const amount = parseFloat($(amountInputId).val()) || 0;
+            const balanceText = $(balanceInfoId).text();
+            const maxAmount = parseFloat(balanceText.replace('Available balance:', '').trim()) || 0;
+
+            if (amount > maxAmount) {
+                AjaxNotifications.error('Amount cannot exceed available balance');
+                return false;
+            }
+            return true;
+        }
+
+        function loadWithdrawalsTable() {
+            const columns = [
+                {
+                    data: 'DT_RowIndex',
+                    name: 'DT_RowIndex',
+                    orderable: false,
+                    searchable: false
+                },
+                {
+                    data: 'withdrawal_date',
+                    name: 'withdrawal_date',
+                },
+                {
+                    data: 'store',
+                    name: 'store'
+                },
+                {
+                    data: 'bankAccount',
+                    name: 'bankAccount',
+                },
+                {
+                    data: 'amount',
+                    name: 'amount',
+                    render: function (data) {
+                        return parseFloat(data).toFixed(2);
+                    }
+                },
+                {
+                    data: 'notes',
+                    name: 'notes',
+                },
+                //{
+                //    data: 'action',
+                //    name: 'action',
+               // }
+              
+                      {
+            data: 'action',
+            name: 'action',
+            orderable: false,
+            searchable: false,
+            render: function(data, type, row) {
+                return `
+                    <button class="btn btn-primary btn-sm" onclick="openEditModal('${row.edit_url}')">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteWithdrawal(${row.id})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                `;
+            }
+        }
+
+            ];
+
+            initDataTable(
+                '#withdrawalsTable',
+                '{{ route($role . 'withdrawals.index') }}',
+                columns
+            );
+        }
+
+        function submitWithdrawal() {
+            if (!validateWithdrawalAmount('#amount', '#balanceInfo')) {
+                return;
+            }
+            showLoader();
+            $.ajax({
+                url: "{{ route($role . 'withdrawals.store') }}",
+                method: 'POST',
+                data: $('#withdrawalForm').serialize(),
+                headers: {
+                    'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+                },
+                success: function (response) {
+                    $('#withdrawalModal').modal('hide');
+                    $('#withdrawalForm')[0].reset();
+                    loadWithdrawalsTable();
+                    AjaxNotifications.handle(response);
+                    hideLoader();
+                },
+                error: function (xhr) {
+                    let response = JSON.parse(xhr.responseText);
+                    if (xhr.status === 422) {
+                        let errorMessages = [];
+                        for (let field in response.errors) {
+                            errorMessages = errorMessages.concat(response.errors[field]);
+                        }
+                        AjaxNotifications.error(errorMessages.join('<br>'));
+                    } else {
+                        AjaxNotifications.error(response.message || 'An error occurred');
+                    }
+                    hideLoader();
+                    console.error('Error creating withdrawal:', response);
+                }
+            });
+        }
+
+        function openEditModal(editUrl) {
+            showLoader();
+            $.ajax({
+                url: editUrl,
+                method: 'GET',
+                success: function (response) {
+                    if (response) {
+                        const withdrawal = response;
+
+                        $('#editWithdrawalId').val(withdrawal.id);
+                        $('#editStoreId').val(withdrawal.store_id);
+                        $('#editAmount').val(withdrawal.amount);
+                        $('#editDescription').val(withdrawal.notes);
+
+                        // Update balance info based on selected store
+                        const selectedStore = $('#editStoreId option:selected');
+                        const balance = selectedStore.data('balance');
+                        $('#editBalanceInfo').text(`Available balance: ${parseFloat(balance).toFixed(2)}`);
+
+                        // Load bank accounts for this store
+                        $.ajax({
+                            url: "{{ route($role.'withdrawals.bank-accounts', '') }}/" + withdrawal.store_id,
+                            method: 'GET',
+                            success: function (bankResponse) {
+                                const bankSelect = $('#editBankAccountId');
+                                bankSelect.empty();
+                                bankSelect.append('<option value="">Select Bank Account</option>');
+
+                                bankResponse.bank_accounts.forEach(function (account) {
+                                    bankSelect.append(
+                                        `<option value="${account.id}" ${account.id == withdrawal.bank_account_id ? 'selected' : ''}>
+                                    ${account.bank_name} (${account.account_number})
+                                </option>`
+                                    );
+                                });
+
+                                $('#editWithdrawalModal').modal('show');
+                            },
+                            error: function(xhr) {
+                                console.error('Error loading bank accounts:', xhr);
+                                AjaxNotifications.error('Error loading bank accounts');
+                            }
+                        });
+                    } else {
+                        console.error('Invalid response format:', response);
+                        AjaxNotifications.error('Received invalid data from the server.');
+                    }
+                    hideLoader();
+                },
+                error: function (xhr) {
+                    console.error('Error fetching withdrawal data:', xhr);
+                    AjaxNotifications.error('Error fetching withdrawal data.');
+                    hideLoader();
+                }
+            });
+        }
+
+        function updateWithdrawal() {
+            if (!validateWithdrawalAmount('#editAmount', '#editBalanceInfo')) {
+                return;
+            }
+            showLoader();
+            const withdrawalId = $('#editWithdrawalId').val();
+            const updateUrl = "{{ route($role . 'withdrawals.update', ':id') }}".replace(':id', withdrawalId);
+
+            $.ajax({
+                url: updateUrl,
+                method: 'POST',
+                data: $('#editWithdrawalForm').serialize(),
+                headers: {
+                    'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content'),
+                    'X-HTTP-Method-Override': 'PUT'
+                },
+                success: function (response) {
+                    $('#editWithdrawalModal').modal('hide');
+                    loadWithdrawalsTable();
+                    AjaxNotifications.handle(response);
+                    hideLoader();
+                },
+                error: function (xhr) {
+                    let response = JSON.parse(xhr.responseText);
+                    if (xhr.status === 422) {
+                        let errorMessages = [];
+                        for (let field in response.errors) {
+                            errorMessages = errorMessages.concat(response.errors[field]);
+                        }
+                        AjaxNotifications.error(errorMessages.join('<br>'));
+                    } else {
+                        AjaxNotifications.error(response.message || 'An error occurred');
+                    }
+                    hideLoader();
+                    console.error('Error updating withdrawal:', response);
+                }
+            });
+        }
+
+function deleteWithdrawal(id) {
+    Swal.fire({
+        title: 'Are you sure?',
+        text: "You won't be able to revert this!",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#3085d6',
+        cancelButtonColor: '#d33',
+        confirmButtonText: 'Yes, delete it!'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            showLoader();
+            const deleteUrl = "{{ route($role . 'withdrawals.destroy', ':id') }}".replace(':id', id);
+            
+            $.ajax({
+                url: deleteUrl,
+                type: 'POST', // Laravel needs POST for DELETE operations
+                data: {
+                    _method: 'DELETE',
+                    _token: '{{ csrf_token() }}'
+                },
+                success: function(response) {
+                    if(response.success) {
+                        $('#withdrawalsTable').DataTable().ajax.reload();
+                        Swal.fire(
+                            'Deleted!',
+                            'Withdrawal has been deleted.',
+                            'success'
+                        );
+                    } else {
+                        Swal.fire(
+                            'Error!',
+                            response.message || 'Failed to delete withdrawal',
+                            'error'
+                        );
+                    }
+                    hideLoader();
+                },
+                error: function(xhr) {
+                    let response = xhr.responseJSON;
+                    Swal.fire(
+                        'Error!',
+                        response.message || 'Error deleting withdrawal',
+                        'error'
+                    );
+                    hideLoader();
+                }
+            });
+        }
+    });
+}
+
+	</script>
+@endpush

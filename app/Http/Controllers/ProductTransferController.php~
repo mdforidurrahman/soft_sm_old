@@ -1,0 +1,298 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Store;
+use App\Models\Product;
+use Illuminate\Support\Str;
+use Illuminate\Http\Request;
+use App\Models\ProductTransfer;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Intervention\Image\Facades\Image;
+use Yajra\DataTables\Facades\DataTables;
+
+class ProductTransferController extends Controller
+{
+    public function index()
+    {
+        if (request()->ajax()) {
+
+$userStores = [];
+            if (Auth::user()->hasRole('admin') || Auth::user()->hasRole('manager')) {
+                $transfers = ProductTransfer::with(['fromStore', 'toStore', 'storeProduct'])
+                    ->latest()
+                    ->get();
+
+				$userStores = Store::pluck('id');
+            } else {
+                // Show transfers where user's store is either from_store or to_store
+                $transfers = ProductTransfer::where(function ($query) use ($userStores) {
+                    $query->whereIn('from_store_id', $userStores)
+                        ->orWhereIn('to_store_id', $userStores);
+                })
+                    ->with(['fromStore', 'toStore', 'storeProduct'])
+                    ->latest()
+                    ->get();
+
+				$userStores = Auth::user()->stores->pluck('id');
+            }
+
+            return DataTables::of($transfers)
+                ->addIndexColumn()
+                ->addColumn('from_store', function ($row) {
+                    return $row->fromStore->name;
+                })
+                ->addColumn('to_store', function ($row) {
+                    return $row->toStore->name;
+                })
+                ->addColumn('product', function ($row) {
+                    return $row->storeProduct->name;
+                })
+                ->addColumn('status', function ($row) {
+
+                    return "<span class=' '>" . ucfirst($row->status) . "</span>";
+                })
+                ->addColumn('action', function ($row) use ($userStores) {
+                    $actions = [];
+
+                    // Check if the current user has permission to take action
+                    $canTakeAction = $row->status === 'pending' && (
+                            in_array($row->from_store_id, $userStores->toArray()) ||
+                            in_array($row->to_store_id, $userStores->toArray())
+                        );
+
+                    if ($canTakeAction) {
+                        // Only show accept/reject if the user is involved in the transfer
+                        $actions[] = '<button class="btn btn-info btn-sm transfer-accept" data-id="' . $row->id . '">Accept</button>';
+                        $actions[] = '<button class="btn btn-danger btn-sm transfer-reject" data-id="' . $row->id . '">Reject</button>';
+                    }
+
+                    return implode(' ', $actions);
+                })
+                ->rawColumns(['status', 'action'])
+                ->make(true);
+        }
+
+        // Prepare stores and products for the form
+        if (Auth::User()->hasRole('admin') || Auth::User()->hasRole('manager')) {
+            $stores = Store::where('status', 1)->latest()->get();
+            $storeProducts = Product::with('store')
+                ->where('status', 1)
+                ->get();
+        } else {
+            $stores = Auth::User()->stores;
+            $userStoreIds = Auth::User()->stores->pluck('id');
+            $storeProducts = Product::with('store')
+                ->where('status', 1)
+                ->whereIn('store_id', $userStoreIds)
+                ->get();
+        }
+
+        return view('admin.product-transfers.index', compact('stores', 'storeProducts'));
+    }
+
+    public function initializeTransfer(Request $request)
+    {
+        $validatedData = $request->validate([
+            'from_store_id' => 'required|exists:stores,id',
+            'to_store_id' => 'required|exists:stores,id|different:from_store_id',
+            'store_product_id' => 'required|exists:products,id',
+            'quantity' => 'required|integer|min:1'
+        ]);
+
+        try {
+            $transfer = ProductTransfer::create([
+                'from_store_id' => $validatedData['from_store_id'],
+                'to_store_id' => $validatedData['to_store_id'],
+                'store_product_id' => $validatedData['store_product_id'],
+                'quantity' => $validatedData['quantity'],
+                'status' => 'pending'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Transfer initiated successfully',
+                'transfer' => $transfer
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to initiate transfer: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function acceptTransfer(Request $request)
+    {
+        $transferId = $request->input('id');
+        $transfer = ProductTransfer::findOrFail($transferId);
+
+        //        if ($transfer->status !== 'pending' || $transfer->to_store_id !== Auth::user()->store_id) {
+        //            return response()->json([
+        //                'success' => false,
+        //                'message' => 'Invalid transfer or unauthorized action'
+        //            ], 403);
+        //        }
+
+        try {
+            DB::transaction(function () use ($transfer) {
+                $sourceProduct = Product::findOrFail($transfer->store_product_id);
+
+                // Initialize new image path as null
+                $newImagePath = null;
+
+                // Check if source product has an image
+                if ($sourceProduct->image) {
+                    // Generate new unique filename
+                    $name_gen = hexdec(uniqid()) . '.' . pathinfo($sourceProduct->image, PATHINFO_EXTENSION);
+
+                    // Full path to source image
+                    $sourcePath = public_path($sourceProduct->image);
+
+                    // Check if source image file exists
+                    if (file_exists($sourcePath)) {
+                        // Read the source image
+                        $image = Image::make($sourcePath);
+
+                        // Resize and save to new location
+                        $image->resize(300, 300)->save(public_path('upload/products/' . $name_gen));
+
+                        // Set new image path
+                        $newImagePath = 'upload/products/' . $name_gen;
+                    }
+                }
+
+                // Create or find the destination product
+                $destProduct = Product::firstOrCreate(
+                    [
+                        'store_id' => $transfer->to_store_id,
+                        'name' => $sourceProduct->name,
+                        'category_id' => $sourceProduct->category_id,
+                        'slug' => Str::slug($sourceProduct->name) . '-' . now()->timestamp,
+                        'sku' => $sourceProduct->name . '-' . $transfer->to_store_id . '-' . now()->timestamp
+                    ],
+                    [
+                        'description' => $sourceProduct->description,
+                        'price' => $sourceProduct->price,
+                        'quantity' => 0,
+                        'user_id' => Auth::id(),
+                        'min_stock' => $sourceProduct->min_stock,
+                        'stock' => 0,
+                        'image' => $newImagePath // Use 'image' instead of 'image_path'
+                    ]
+                );
+
+                // If the product already exists and we have a new image, update it
+                if ($destProduct->wasRecentlyCreated === false && $newImagePath) {
+                    $destProduct->update(['image' => $newImagePath]);
+                }
+
+                // Reduce source quantity
+                $sourceProduct->decrement('quantity', $transfer->quantity);
+
+                // Increase destination quantity
+                $destProduct->increment('quantity', $transfer->quantity);
+
+                // Update transfer status
+                $transfer->update(['status' => 'accepted']);
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Transfer accepted successfully'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to accept transfer: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function rejectTransfer(Request $request)
+    {
+        $transferId = $request->input('id');
+        $transfer = ProductTransfer::findOrFail($transferId);
+
+        if ($transfer->status !== 'pending') {
+            return response()->json(['error' => 'Transfer cannot be modified'], 400);
+        }
+
+        $transfer->update(['status' => 'rejected']);
+
+        return response()->json($transfer);
+    }
+
+    public function listPendingTransfers($storeId)
+    {
+        $pendingTransfers = ProductTransfer::where('to_store_id', $storeId)
+            ->where('status', 'pending')
+            ->with(['fromStore', 'storeProduct'])
+            ->get();
+
+        return response()->json($pendingTransfers);
+    }
+
+
+    public function transferHistory()
+    {
+        $transfers = ProductTransfer::with(['fromStore', 'toStore', 'storeProduct'])
+            ->when(!Auth::user()->hasRole('admin'), function ($query) {
+                return $query->where('from_store_id', Auth::user()->store_id)
+                    ->orWhere('to_store_id', Auth::user()->store_id);
+            })
+            ->latest()
+            ->get();
+
+        return view('admin.product-transfers.history', compact('transfers'));
+    }
+
+    /**
+     * Show the form for creating a new resource.
+     */
+    public function create()
+    {
+        //
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     */
+    public function store(StoreProductTransferRequest $request)
+    {
+        //
+    }
+
+    /**
+     * Display the specified resource.
+     */
+    public function show(ProductTransfer $productTransfer)
+    {
+        //
+    }
+
+    /**
+     * Show the form for editing the specified resource.
+     */
+    public function edit(ProductTransfer $productTransfer)
+    {
+        //
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update(UpdateProductTransferRequest $request, ProductTransfer $productTransfer)
+    {
+        //
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     */
+    public function destroy(ProductTransfer $productTransfer)
+    {
+        //
+    }
+}

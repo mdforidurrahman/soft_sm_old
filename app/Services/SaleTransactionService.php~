@@ -1,0 +1,354 @@
+<?php
+namespace App\Services;
+
+use App\Models\Account;
+use App\Models\AccountTransaction;
+use App\Models\DailyCashReport;
+use App\Models\BankAccount;
+use App\Models\Withdrawal;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+
+class SaleTransactionService
+{
+
+	public function recordSale(int $storeId, float $amount, ?string $source = 'Sales', ?string $description = null, int $userId, ?int $referenceId = null): AccountTransaction {
+		return DB::transaction(function () use ($storeId, $amount, $source, $description, $userId, $referenceId) {
+			// Get or create account for this store
+			$account = Account::firstOrCreate(
+				['store_id' => $storeId],
+				['created_by_id' => $userId, 'current_balance' => 0]
+			);
+
+			// Update account balance
+			$account->current_balance += $amount;
+			$account->save();
+
+			// Create transaction record
+			$transaction = new AccountTransaction();
+			$transaction->transaction_id = 'SALE-' . Str::uuid()->toString();
+			$transaction->store_id = $storeId;
+			$transaction->account_id = $account->id;
+			$transaction->transaction_type = 'income';
+			$transaction->transaction_source = $source;
+			$transaction->amount = $amount;
+			$transaction->description = $description;
+			$transaction->reference_id = $referenceId;
+			$transaction->transaction_date = Carbon::today();
+			$transaction->created_by_id = $userId;
+			$transaction->save();
+
+			// Update or create daily cash report
+			$this->updateDailyCashReport($storeId, $account->id, $userId);
+
+			return $transaction;
+		});
+	}
+
+	public function recordExpense(int $storeId, float $amount, ?string $source, ?string $description = null, int $userId, ?int $referenceId = null): AccountTransaction {
+		return DB::transaction(function () use ($storeId, $amount, $source, $description, $userId, $referenceId) {
+			$account = Account::firstOrCreate(
+				['store_id' => $storeId],
+				[
+					'created_by_id' => Auth::id(),
+					'current_balance' => 0,
+				]
+			);
+			// Update account balance
+			$account->current_balance -= $amount;
+			$account->save();
+
+			// Create transaction record
+			$transaction = new AccountTransaction();
+			$transaction->transaction_id = 'EXP-' . Str::uuid()->toString();
+			$transaction->store_id = $storeId;
+			$transaction->account_id = $account->id;
+			$transaction->transaction_type = 'expense';
+			$transaction->transaction_source = $source;
+			$transaction->amount = $amount;
+			$transaction->description = $description;
+			$transaction->reference_id = $referenceId; // Add reference to original expense
+			$transaction->transaction_date = Carbon::today();
+			$transaction->created_by_id = $userId;
+			$transaction->save();
+
+			// Update or create daily cash report
+			$this->updateDailyCashReport($storeId, $account->id, $userId);
+
+			return $transaction;
+		});
+	}
+
+
+	public function updateTransaction(int $referenceId, string $transactionType, float $newAmount, ?string $source = null, ?string $description = null, int $userId): ?AccountTransaction {
+		return DB::transaction(function () use ($referenceId, $transactionType, $newAmount, $source, $description, $userId) {
+			// Find the transaction by reference ID and type
+			$transaction = AccountTransaction::where('reference_id', $referenceId)
+				->where('transaction_type', $transactionType)
+				->first();
+
+			if (!$transaction) {
+				return null;
+			}
+
+			// Get the associated account
+			$account = Account::findOrFail($transaction->account_id);
+			$storeId = $transaction->store_id;
+
+			// Calculate the difference between old and new amount
+			$amountDifference = $newAmount - $transaction->amount;
+
+			// Update account balance based on transaction type
+			if ($transactionType === 'income') {
+				$account->current_balance += $amountDifference;
+			} else {
+				$account->current_balance -= $amountDifference;
+			}
+
+			$account->save();
+
+			// Update transaction
+			$transaction->amount = $newAmount;
+
+			// Only update these if new values are provided
+			if ($source) {
+				$transaction->transaction_source = $source;
+			}
+
+			if ($description) {
+				$transaction->description = $description;
+			}
+
+			$transaction->updated_at = now();
+			$transaction->save();
+
+			// Update daily cash report
+			$this->updateDailyCashReport($storeId, $account->id, $userId);
+
+			return $transaction;
+		});
+	}
+
+	public function deleteTransaction(int $referenceId, string $transactionType, int $userId): bool {
+		return DB::transaction(function () use ($referenceId, $transactionType, $userId) {
+			$transaction = AccountTransaction::where('reference_id', $referenceId)
+				->where('transaction_type', $transactionType)
+				->first();
+
+			if (!$transaction) {
+				return false;
+			}
+
+			// Get the associated account
+			$account = Account::findOrFail($transaction->account_id);
+			$storeId = $transaction->store_id;
+
+			// Reverse the effect on account balance
+			if ($transactionType === 'income') {
+				$account->current_balance -= $transaction->amount;
+			} else {
+				$account->current_balance += $transaction->amount;
+			}
+
+			$account->save();
+			// Delete the transaction
+			$transaction->delete();
+			// Update daily cash report
+			$this->updateDailyCashReport($storeId, $account->id, $userId);
+			return true;
+		});
+	}
+
+	public function recordAdjustment(int $storeId, float $amount, ?string $description = null, int $userId, ?int $referenceId = null): AccountTransaction {
+		return DB::transaction(function () use ($storeId, $amount, $description, $userId, $referenceId) {
+			// Get account for this store
+			$account = Account::firstOrCreate(
+				['store_id' => $storeId],
+				[
+					'created_by_id' => Auth::id(),
+					'current_balance' => 0,
+				]
+			);
+			// Update account balance
+			$account->current_balance += $amount;
+			$account->save();
+
+			// Create transaction record
+			$transaction = new AccountTransaction();
+			$transaction->transaction_id = 'ADJ-' . Str::uuid()->toString();
+			$transaction->store_id = $storeId;
+			$transaction->account_id = $account->id;
+			$transaction->transaction_type = 'adjustment';
+			$transaction->transaction_source = 'Manual Adjustment';
+			$transaction->amount = $amount;
+			$transaction->description = $description;
+			$transaction->reference_id = $referenceId;
+			$transaction->transaction_date = Carbon::today();
+			$transaction->created_by_id = $userId;
+			$transaction->save();
+
+			// Update or create daily cash report
+			$this->updateDailyCashReport($storeId, $account->id, $userId);
+
+			return $transaction;
+		});
+	}
+
+	public function recordWithdrawal(int $storeId, float $amount, int $bankAccountId, ?string $description = null, int $userId): AccountTransaction {
+		return DB::transaction(function () use ($storeId, $amount, $bankAccountId, $description, $userId) {
+
+
+			$account = Account::where('store_id', $storeId)->first();
+
+			// Create withdrawal record first
+			$withdrawal = Withdrawal::create([
+				'store_id' => $storeId,
+				'account_id' => $account->id,
+				'bank_account_id' => $bankAccountId,
+				'reference_number'=> 'WDR-' . Str::uuid()->toString(),
+				'amount' => $amount,
+				'notes' => $description,
+				'created_by_id' => $userId,
+				'withdrawal_date' => Carbon::now(),
+			]);
+
+
+			// Update account balance
+			$account->current_balance -= $amount;
+			$account->save();
+
+			// Create transaction record
+			$transaction = new AccountTransaction();
+			$transaction->transaction_id = 'WTH-' . Str::uuid()->toString();
+			$transaction->store_id = $storeId;
+			$transaction->account_id = $account->id;
+			$transaction->transaction_type = 'withdrawal';
+			$transaction->transaction_source = 'Bank Transfer';
+			$transaction->amount = $amount;
+			$transaction->description = $description;
+			$transaction->reference_id = $withdrawal->id;
+			$transaction->transaction_date = Carbon::today();
+			$transaction->created_by_id = $userId;
+			$transaction->save();
+
+			// Update or create daily cash report
+			$this->updateDailyCashReport($storeId, $account->id, $userId);
+
+			return $transaction;
+		});
+	}
+
+
+	public function updateWithdrawal(int $withdrawalId, float $newAmount, ?int $bankAccountId = null, ?string $description = null, int $userId): ?Withdrawal
+	{
+		return DB::transaction(function () use ($withdrawalId, $newAmount, $bankAccountId, $description, $userId) {
+			// Find withdrawal record
+			$withdrawal = Withdrawal::find($withdrawalId);
+			if (!$withdrawal) {
+				return null;
+			}
+
+			// Update associated transaction
+			$transaction = $this->updateTransaction(
+				$withdrawalId,
+				'withdrawal',
+				$newAmount,
+				null,
+				$description,
+				$userId
+			);
+
+			if (!$transaction) {
+				return null;
+			}
+
+			// Update withdrawal record
+			$withdrawal->amount = $newAmount;
+
+			if ($bankAccountId) {
+				$withdrawal->bank_account_id = $bankAccountId;
+			}
+
+			if ($description) {
+				$withdrawal->description = $description;
+			}
+
+			$withdrawal->save();
+
+			return $withdrawal;
+		});
+	}
+
+
+	public function getWithdrawalHistory(int $storeId, ?Carbon $startDate = null, ?Carbon $endDate = null)
+	{
+		$query = Withdrawal::where('store_id', $storeId);
+
+		if ($startDate) {
+			$query->where('withdrawal_date', '>=', $startDate);
+		}
+
+		if ($endDate) {
+			$query->where('withdrawal_date', '<=', $endDate);
+		}
+
+		return $query->orderBy('withdrawal_date', 'desc')->get();
+	}
+
+	public function updateDailyCashReport(int $storeId, int $accountId, int $userId): DailyCashReport {
+		$today = Carbon::today();
+
+		// Sum today's transactions
+		$todayIncome = AccountTransaction::where('store_id', $storeId)
+			->where('transaction_date', $today)
+			->where('transaction_type', 'income')
+			->sum('amount');
+
+		$todayExpenses = AccountTransaction::where('store_id', $storeId)
+			->where('transaction_date', $today)
+			->where('transaction_type', 'expense')
+			->sum('amount');
+
+		$todayWithdrawals = AccountTransaction::where('store_id', $storeId)
+			->where('transaction_date', $today)
+			->where('transaction_type', 'withdrawal')
+			->sum('amount');
+
+		$todayAdjustments = AccountTransaction::where('store_id', $storeId)
+			->where('transaction_date', $today)
+			->where('transaction_type', 'adjustment')
+			->sum('amount');
+
+		// Get yesterday's closing balance as today's opening
+		$yesterdayReport = DailyCashReport::where('store_id', $storeId)
+			->where('report_date', $today->copy()->subDay())
+			->first();
+
+		$openingBalance = $yesterdayReport ? $yesterdayReport->closing_balance : 0;
+
+		// Calculate closing balance
+		$closingBalance = $openingBalance + $todayIncome - $todayExpenses - $todayWithdrawals + $todayAdjustments;
+
+		// Update or create today's report
+		return DailyCashReport::updateOrCreate(
+			['store_id' => $storeId, 'report_date' => $today],
+			[
+				'opening_balance' => $openingBalance,
+				'total_income' => $todayIncome,
+				'total_expenses' => $todayExpenses,
+				'total_withdrawals' => $todayWithdrawals,
+				'total_adjustments' => $todayAdjustments,
+				'closing_balance' => $closingBalance,
+				'created_by_id' => $userId
+			]
+		);
+	}
+
+	public function getTransactionByReference(int $referenceId, string $transactionType): ?AccountTransaction {
+		return AccountTransaction::where('reference_id', $referenceId)
+			->where('transaction_type', $transactionType)
+			->first();
+	}
+}

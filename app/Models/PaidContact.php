@@ -1,0 +1,65 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Contact extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'name',
+        'father_name',
+        'role',
+        'sales_type',
+        'district',
+        'thana',
+        'post_office',
+        'village',
+        'phone',
+        'nid',
+        'contact_id',
+        'store_id',
+        'image',
+        'finger_print',
+        'signature',
+        'status',
+        'product_category_id',
+        'created_by', // Make sure this is fillable if you're setting it during creation
+        'updated_by', // Make sure this is fillable if you're setting it during updates
+    ];
+
+    public function store()
+    {
+        return $this->belongsTo(Store::class);
+    }
+
+    public function sells()
+    {
+        return $this->hasMany(Sell::class, 'customer_id');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updater()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+// public function payments()
+// {
+//    return $this->hasMany(CustomerPayment::class, 'customer_id');
+//  }
+  
+  
+
+public function payments()
+{
+    return $this->hasManyThrough(SellPayment::class, Sell::class, 'customer_id', 'sell_id');
+}
+}

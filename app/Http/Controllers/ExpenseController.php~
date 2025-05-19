@@ -1,0 +1,307 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\StoreExpenseRequest;
+use App\Http\Requests\UpdateExpenseRequest;
+use App\Models\Contact;
+use App\Models\Expense;
+use App\Models\ExpenseCategory;
+use App\Models\Store;
+use App\Models\User;
+use App\Services\SaleTransactionService;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Exception;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Yajra\DataTables\DataTables;
+
+class ExpenseController extends Controller
+{
+
+	protected SaleTransactionService $transactionService;
+
+	public function __construct(SaleTransactionService $transactionService) {
+		$this->transactionService = $transactionService;
+	}
+
+	/**
+	 * Display a listing of the resource.
+	 */
+	public function index() {
+		$projects = Expense::with(['user', 'contact', 'store', 'expenseCategory'])->latest()->get();
+		$stores = Store::latest()->get();
+		$users = User::latest()->get();
+		$contacts = Contact::latest()->get();
+		$categories = ExpenseCategory::latest()->get();
+		$role = auth()->user()?->roles()?->first()?->name ?? 'admin';
+		if (request()->ajax()) {
+			return DataTables::of($projects)
+				->addColumn('invoice', function ($row) use ($role) {
+					$showInvoiceUrl = route($role . '.expense.showInvoice', $row->id);
+					$downloadInvoiceUrl = route($role . '.expense.downloadInvoice', $row->id);
+
+					return '
+                    <div class="dropdown">
+                        <button type="button" id="dropdownMenuButton-' . $row->id . '" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="fas fa-file-invoice"></i> <!-- Font Awesome Invoice Icon -->
+                        </button>
+                        <ul class="dropdown-menu" aria-labelledby="dropdownMenuButton-' . $row->id . '">
+                            <li><a class="dropdown-item" href="' . $showInvoiceUrl . '" target="_blank">Show Invoice</a></li>
+                            <li><a class="dropdown-item" href="' . $downloadInvoiceUrl . '" target="_blank">Download Invoice</a></li>
+                        </ul>
+                    </div>
+                ';
+				})
+				->addIndexColumn()
+				->addColumn('store_id', function ($row) {
+					return $row['store']['name'] ?? 'N/A';
+				})
+				->editColumn('expense_for_id', function ($row) {
+					return $row['user']['name'] ?? 'N/A';
+				})
+				->addColumn('expense_for_contact', function ($row) {
+					return $row['contact']['name'] ?? 'N/A';
+				})
+				->addColumn('expense_category_id', function ($row) {
+					return $row['expenseCategory']['name'] ?? 'N/A';
+				})
+				->addColumn('status', function ($row) {
+					return view('components.status-toggle', [
+						'id' => $row->id,
+						'model' => 'expense',
+						'status' => $row->status
+					])->render();
+				})
+				->addColumn('action', function ($row) {
+					return view('components.action-buttons', [
+						'id' => $row->id,
+						'model' => 'expense',
+						'viewModalRoute' => 'expense.edit',
+						'editModal' => 'editExpenseModal',
+						'editModalRoute' => 'expense.edit',
+						'deleteRoute' => 'expense.destroy',
+					])->render();
+				})
+				->rawColumns(['invoice', 'action', 'status', 'store_id', 'expense_for_id', 'expense_for_contact', 'expense_category_id'])
+				->make(true);
+		}
+
+		return view('admin.expense.index', compact('stores', 'users', 'contacts', 'categories'));
+	}
+
+	public function downloadInvoice($id) {
+		$expense = Expense::with(['store', 'user', 'contact'])->findOrFail($id);
+
+		// Generate PDF using a view file, e.g., 'invoices.invoice-pdf'
+		$pdf = PDF::loadView('invoices.invoice-pdf', compact('expense'));
+
+		return $pdf->download("invoice_{$id}.pdf");
+	}
+
+	/**
+	 * Show the invoice in a modal.
+	 */
+	public function showInvoice($id) {
+		// Ensure you are retrieving a model instance with its relationships loaded
+		$expense = Expense::with(['store', 'user', 'contact', 'expenseCategory'])->findOrFail($id);
+
+
+		// Return the rendered view
+		return view('admin.expense.invoice-modal', compact('expense'))->render();
+	}
+
+	public function downloadInvoicePDF($id) {
+		$expense = Expense::with(['store', 'user', 'expenseCategory', 'contact'])->findOrFail($id);
+
+		$pdf = PDF::loadView('admin.expense.invoice_pdf', compact('expense'));
+
+		return $pdf->download("invoice_{$expense->reference_no}.pdf");
+	}
+
+
+	public function show($id) {
+		$expense = Expense::findOrFail($id);
+		return response()->json($expense);
+	}
+
+
+	/**
+	 * Show the form for creating a new resource.
+	 */
+	public function create(Request $request) {
+	}
+
+	public function edit($id) {
+		$expense = Expense::with(['store', 'user', 'contact', 'expenseCategory'])->findOrFail($id);
+		return response()->json($expense);
+	}
+
+
+	/**
+	 * Store a newly created resource in storage.
+	 */
+	public function store(StoreExpenseRequest $request) {
+	}
+
+
+	public function saveData(Request $request) {
+		try {
+			DB::beginTransaction();
+			// Validate the request data
+			$request->validate([
+				'store_id' => 'required|exists:stores,id',
+				'expense_category_id' => 'required|exists:expense_category,id',
+				'reference_no' => 'nullable|string|unique:expenses',
+				'expense_date' => 'required|date',
+				'expense_for_id' => 'nullable|exists:users,id',
+				'expense_for_contact' => 'nullable|exists:contacts,id',
+				'document' => 'nullable|file|max:5120',
+				'total_amount' => 'required|numeric',
+			]);
+
+			// Auto-generate the reference_no if not provided
+			$referenceNo = $request->reference_no ?: 'EXP-' . strtoupper(uniqid());
+
+			// Handle document upload
+			$documentPath = null;
+			if ($request->hasFile('document')) {
+				$documentPath = $request->file('document')->store('documents', 'public');
+			}
+
+			// Create the expense record
+			$expense = Expense::create([
+				'store_id' => $request->store_id,
+				'expense_category_id' => $request->expense_category_id,
+				'reference_no' => $referenceNo,
+				'expense_date' => $request->expense_date,
+				'expense_for_id' => $request->expense_for_id,
+				'expense_for_contact' => $request->expense_for_contact,
+				'document' => $documentPath,
+				'total_amount' => $request->total_amount,
+			]);
+
+			$expenseCategory = ExpenseCategory::findOrFail($request->expense_category_id);
+
+			$expenseTransaction = $this->transactionService->recordExpense(
+				$request->store_id,
+				$request->amount,
+				$expenseCategory->name,
+				'Expense for ' . $expense->id,
+				Auth::id(),
+				$expense->id
+			);
+
+			DB::commit();
+
+			return response()->json(['success' => 'Expense added successfully!']);
+		} catch (Exception $e) {
+			DB::rollBack();
+			return response()->json(['error' => $e->getMessage()], 500);
+		}
+	}
+
+
+	public function updateData(Request $request, $id) {
+		try {
+			DB::beginTransaction();
+			$request->validate([
+				'store_id' => 'required|exists:stores,id',
+				'expense_category_id' => 'required|exists:expense_categories,id',
+				'reference_no' => 'nullable|string|unique:expenses,reference_no,' . $id,
+				'expense_date' => 'required|date',
+				'expense_for_id' => 'nullable|exists:users,id',
+				'expense_for_contact' => 'nullable|exists:contacts,id',
+				'document' => 'nullable|file|max:5120',
+				'total_amount' => 'required|numeric',
+			]);
+
+			$expense = Expense::findOrFail($id);
+			$documentPath = $expense->document;
+			if ($request->hasFile('document')) {
+				$documentPath = $request->file('document')->store('documents', 'public');
+			}
+
+			$expense->update([
+				'store_id' => $request->store_id,
+				'expense_category_id' => $request->expense_category_id,
+				'reference_no' => $request->reference_no ?? $expense->reference_no,
+				'expense_date' => $request->expense_date,
+				'expense_for_id' => $request->expense_for_id,
+				'expense_for_contact' => $request->expense_for_contact,
+				'document' => $documentPath,
+				'total_amount' => $request->total_amount,
+			]);
+
+			$expenseCategory = ExpenseCategory::findOrFail($request->expense_category_id);
+
+			$updatedExpense = $this->transactionService->updateTransaction(
+				$expense->id,
+				'expense',
+				$request->total_amount,
+				$expenseCategory->name,
+				'Expense for ' . $expense->id,
+				Auth::id()
+			);
+
+			DB::commit();
+
+			return response()->json(['success' => 'Expense updated successfully!']);
+		} catch (\Throwable $th) {
+			DB::rollBack();
+
+			return response()->json(['error' => $th->getMessage()]);
+		}
+	}
+
+
+
+	/**
+	 * Display the specified resource.
+	 */
+
+
+	/**
+	 * Update the specified resource in storage.
+	 */
+	public function update(UpdateExpenseRequest $request, Expense $expense) {
+		//
+	}
+
+	/**
+	 * Remove the specified resource from storage.
+	 */
+
+	// Display the expense categories view
+	// Add a new method for handling the expense category
+	public function destroy($id) {
+		try {
+			DB::beginTransaction();
+			$expense = Expense::findOrFail($id);
+
+			$deleted = $this->transactionService->deleteTransaction(
+				$expense->id,
+				'expense',
+				Auth::id()
+			);
+
+			if (!$deleted) {
+				// Handle deletion failure
+				return response()->json(['error' => 'Could not delete expense transaction.'], 404);
+			}
+
+			if ($expense->document) {
+				Storage::disk('public')->delete($expense->document);
+			}
+
+			$expense->delete();
+
+			return response()->json(['success' => 'Category deleted successfully!']);
+		} catch (Exception $e) {
+			DB::rollBack();
+			return response()->json(['error' => $e->getMessage()], 500);
+		}
+	}
+}

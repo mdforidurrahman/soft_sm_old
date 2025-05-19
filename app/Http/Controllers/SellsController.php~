@@ -1,0 +1,573 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\StoreSellRequest;
+use App\Http\Requests\UpdateSellRequest;
+use App\Models\Contact;
+use App\Models\Product;
+use App\Models\ProductCategory;
+use App\Models\Sell;
+use App\Models\SellItem;
+use App\Models\SellShipping;
+use App\Models\Store;
+use App\Services\SaleTransactionService;
+use Barryvdh\DomPDF\PDF;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Yajra\DataTables\DataTables;
+
+class SellsController extends Controller
+{
+
+	protected SaleTransactionService $transactionService;
+
+	public function __construct(SaleTransactionService $transactionService) {
+		$this->transactionService = $transactionService;
+	}
+
+	/**
+	 * Display a listing of the resource.
+	 */
+	public function index() {
+		$supplier = Contact::whereRole('customer')->get();
+
+
+		if (Auth::User()->hasRole('admin')) {
+			$storeName = Store::where('status', 1)->latest()->get();
+		} else {
+			$storeName = Auth::User()->stores;
+		}
+
+		if (request()->ajax()) {
+			$data = Sell::latest();
+			$role = auth()->user()?->roles()?->first()?->name ?? 'admin';
+
+			return DataTables::of($data)
+				->addIndexColumn()
+				->addColumn('invoice', function ($row) use ($role) {
+					$showInvoiceUrl = route($role . '.sell.showInvoice', $row->id);
+					$downloadInvoiceUrl = route($role . '.sell.downloadInvoice', parameters: $row->id);
+
+					return '
+                    <div class="dropdown">
+                        <button type="button" id="dropdownMenuButton-' . $row->id . '" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="fas fa-file-invoice"></i> <!-- Font Awesome Invoice Icon -->
+                        </button>
+                        <ul class="dropdown-menu" aria-labelledby="dropdownMenuButton-' . $row->id . '">
+                            <li><a class="dropdown-item" href="' . $showInvoiceUrl . '" target="_blank">Show Invoice</a></li>
+                            <li><a class="dropdown-item" href="' . $downloadInvoiceUrl . '" target="_blank">Download Invoice</a></li>
+                        </ul>
+                    </div>
+                ';
+				})
+				->addColumn('customer_name', function ($row) {
+					$customer_name = Contact::where('id', $row->customer_id)->first();
+					return $customer_name->name;
+				})
+				->editColumn('contact_id', function ($row) {
+					return $row->contact_id;
+				})
+				->editColumn('sells_date', function ($row) {
+					//                    return $row->sells_date->humanize();
+					return $row->sells_date;
+				})
+				->addColumn('status', function ($row) {
+					return view('components.status-toggle', [
+						'id' => $row->id,
+						'model' => 'contact',
+						'status' => $row->status
+					])->render();
+				})
+				->addColumn('action', function ($row) {
+					return view('components.action-buttons', [
+						'id' => $row->id,
+						'model' => 'sells',
+						'editModal' => 'editModal',
+						'editModalRoute' => 'sell.edit',
+						'deleteRoute' => 'sell.destroy',
+						'returnModal' => 'returnSellModal',
+						'returnModalRoute' => 'sell.store',
+					])->render();
+				})
+				->rawColumns(['action', 'status', 'invoice'])
+				->make(true);
+		}
+
+
+		$products = Product::latest()->get();
+
+		$categories = ProductCategory::latest()->get();
+
+		return view('admin.sell.index', compact('supplier', 'products', 'storeName', 'categories'));
+	}
+
+	/**
+	 * Show the form for creating a new resource.
+	 */
+	public function create() {
+		if (Auth::User()->hasRole('admin')) {
+			$storeName = Store::where('status', 1)->latest()->get();
+		} else {
+			$storeName = Auth::User()->stores;
+		}
+
+		$data = [
+			'suppliers' => Contact::whereRole('customer')
+				->select('id', 'name')->get(),
+			'stores' => $storeName,
+			'business_locations' => $storeName,
+			'products' => Product::latest()->get(),
+			'payment_methods' => ['Cash', 'Bank Transfer', 'Credit Card', 'Cheque'],
+			'payment_terms' => ['Due on Receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60'],
+			'purchase_statuses' => ['Draft', 'Ordered', 'Received', 'Pending', 'Cancelled']
+		];
+
+		return response()->json([
+			'success' => true,
+			'data' => $data
+		]);
+	}
+
+	/**
+	 * Store a newly created resource in storage.
+	 */
+	public function store(StoreSellRequest $request) {
+		try {
+			$data = $request->isJson() ? $request->json()->all() : $request->all();
+			DB::beginTransaction();
+			$totalBeforeTax = $this->calculateTotalBeforeTax($request->items);
+			$discountAmount = 0;
+			$discountType = $request->discount_type;
+			$discountPercentage = 0;
+			if ($discountType === 'fixed') {
+				$discountAmount = $request->discount_amount;
+				$discountPercentage = 0;
+			}
+			if ($discountType === 'percentage') {
+				$discountAmount = (($totalBeforeTax + $request->tax_amount) * $request->discount_amount) / 100;
+				$discountPercentage = $request->discount_amount;
+			}
+			$netTotal = $totalBeforeTax - $discountAmount + $request->tax_amount + ($request->shipping_cost ?? 0);
+
+			$paymentDue = $netTotal - ($request->advance_balance ?? 0);
+
+			$invoiceNumber = strtoupper(bin2hex(random_bytes(15)));
+			// Create sell record
+			$reference_no = '';
+			if (!$request->reference_no == null) {
+				$reference_no = $request->reference_no;
+			} else {
+				$reference_no = strtoupper(bin2hex(random_bytes(8)));
+			}
+			$sell = Sell::create([
+				'store_id' => $request->store_id,
+				'customer_id' => $request->customer_id,
+				'reference_no' => $reference_no,
+				'invoice_no' => $invoiceNumber,
+				'sell_date' => $request->sell_date,
+				'sell_status' => $request->sell_status,
+				'payment_term' => $request->pay_term,
+				'payment_term_type' => $request->pay_term_type,
+				'total_before_tax' => $totalBeforeTax,
+
+
+				'tax_amount' => $request->tax_amount ?? 0,
+				'discount_type' => $request->discount_type,
+				'discount_amount' => $discountAmount,
+				'discount_percentage' => $discountPercentage,
+				'net_total' => $netTotal,
+
+				'advance_balance' => $request->advance_balance ?? 0,
+				'payment_due' => $paymentDue,
+				'payment_status' => $request->payment_status,
+				'payment_due_date' => $request->payment_due_date,
+			]);
+
+			// Create sell items
+
+			foreach ($request->items as $item) {
+				$SellItem = new SellItem([
+					'product_id' => $item['product_id'],
+					'quantity' => $item['quantity'],
+					'unit_cost_before_tax' => $item['unit_cost'],
+					'tax_amount' => $item['tax_amount'] ?? 0,
+					'net_cost' => $item['net_cost'],
+				]);
+				$sell->items()->save($SellItem);
+
+				// Update product stock
+				Product::where('id', $item['product_id'])
+					->decrement('quantity', $item['quantity']);
+			}
+
+			// Create shipping details if provided
+			$trakingNumber = strtoupper(bin2hex(random_bytes(15)));
+			if ($request->filled('shipping_address')) {
+				$sell->shippingDetail()->create([
+					'shipping_address' => $request->shipping_address,
+					'shipping_method' => $request->shipping_method,
+					'shipping_cost' => $request->shipping_cost,
+					'expected_delivery_date' => $request->expected_delivery_date,
+					'tracking_number' => $trakingNumber,
+					'shipping_status' => $request->shipping_status,
+				]);
+			}
+
+			// Handle advance payment if any
+
+			$sell->payments()->create([
+				'amount' => $request->advance_balance,
+				'paid_on' => now(),
+				'payment_method' => $request->payment_method,
+				'payment_account' => $request->payment_account,
+				'transaction_reference' => strtoupper(bin2hex(random_bytes(8))),
+
+				'payment_status' => $request->payment_status,
+			]);
+
+			// Record sale
+			$transaction = $this->transactionService->recordSale(
+				$request->store_id,
+				$request->advance_balance,
+				'Sales',
+				'Sales Record for ' . $sell->id,
+				Auth::id(),
+				$sell->id
+			);
+
+			$this->transactionService->recordExpense(
+				$sell->store_id,
+				$discountAmount,
+				'Discount',
+				'Expense for Discount Record for Sell' . $sell->id,
+				Auth::id(),
+				$sell->id
+			);
+
+
+			$saleDetails = [
+				'order_id' => $sale->id,
+				'amount' => $sale->total_amount,
+				'item_count' => $sale->items->count(),
+				'delivery_address' => $sale->shipping_address
+			];
+
+			$response = $this->smsService->sendSaleConfirmation(
+				$sale->customer->phone,
+				$sale->customer->name,
+				$saleDetails
+			);
+
+			DB::commit();
+			$sell->load('items', 'payments', 'shippingDetail');
+
+
+			return $this->success(['id' => $sell->id], 'Sell created successfully');
+		} catch (\Exception $e) {
+			DB::rollBack();
+			if (isset($documentPath)) {
+				Storage::delete($documentPath);
+			}
+			return $this->error('Something Went Wrong : ', $e->getMessage(), 500);
+		}
+	}
+
+
+	/**
+	 * Display the specified resource.
+	 */
+	public function show(string $id) {
+		//
+	}
+
+	/**
+	 * Show the form for editing the specified resource.
+	 */
+	public function edit($id) {
+		try {
+			$sell = Sell::with([
+				'items.product' => function ($query) {
+					$query->select('id', 'name', 'sku', 'price');
+				},
+				'shippingDetail',
+				'payments'
+			])->findOrFail($id);
+
+
+			// Transform the items to include product name
+			$sell->items->transform(function ($item) {
+				return [
+					'sell_id' => $item->purchase_id,
+					'product_id' => $item->product_id,
+					'product_name' => $item->product->name,
+					'quantity' => $item->quantity,
+					'unit_cost' => $item->unit_cost,
+					'discount_percent' => $item->discount_percent,
+					'unit_cost_before_tax' => $item->unit_cost_before_tax,
+					'tax_amount' => $item->tax_amount,
+					'net_cost' => $item->net_cost,
+					'profit_margin' => $item->profit_margin,
+					'unit_selling_price' => $item->unit_selling_price
+				];
+			});
+
+			// dd($sell);
+
+			return response()->json([
+				'success' => true,
+				'data' => $sell
+			]);
+		} catch (\Exception $e) {
+			return $this->error('Something Went Wrong : ', $e->getMessage(), 500);
+		}
+	}
+
+	/**
+	 * Update the specified resource in storage.
+	 */
+	public function update(UpdateSellRequest $request, $id) {
+		try {
+			$data = $request->isJson() ? $request->json()->all() : $request->all();
+			DB::beginTransaction();
+
+			$sell = Sell::findOrFail($id);
+
+			$totalBeforeTax = $this->calculateTotalBeforeTax($request->items);
+			$discountAmount = 0;
+			$discountType = $request->discount_type;
+			$discountPercentage = 0;
+			if ($discountType === 'fixed') {
+				$discountAmount = $request->discount_amount;
+				$discountPercentage = 0;
+			}
+			if ($discountType === 'percentage') {
+				$discountAmount = (($totalBeforeTax + $request->tax_amount) * $request->discount_amount) / 100;
+				$discountPercentage = $request->discount_amount;
+			}
+			$netTotal = $totalBeforeTax - $discountAmount + $request->tax_amount + ($request->shipping_cost ?? 0);
+			$paymentDue = 0;
+			$advanceBalance = 0;
+			if ($request->payment_status == 'completed') {
+				$paymentDue = 0;
+				$advanceBalance = $netTotal;
+			} else {
+				$paymentDue = $netTotal - ($request->advance_balance ?? 0);
+			}
+			// Update sell record
+			$sell->update([
+				'store_id' => $request->store_id,
+				'customer_id' => $request->customer_id,
+				'sell_date' => $request->sell_date,
+				'sell_status' => $request->sell_status,
+				'payment_term' => $request->pay_term,
+				'payment_term_type' => $request->pay_term_type,
+				'total_before_tax' => $totalBeforeTax,
+
+
+				'tax_amount' => $request->tax_amount ?? 0,
+				'discount_type' => $request->discount_type,
+				'discount_amount' => $discountAmount,
+				'discount_percentage' => $discountPercentage,
+				'net_total' => $netTotal,
+
+				'advance_balance' => $advanceBalance,
+				'payment_due' => $paymentDue,
+				'payment_status' => $request->payment_status,
+				'payment_due_date' => $request->payment_due_date,
+			]);
+
+			// Update or create sell items
+			$existingItemIds = $sell->items()->pluck('id')->toArray();
+			$newItemIds = array_column($request->items, 'id');
+			// Delete items not in request
+			foreach (array_diff($existingItemIds, $newItemIds) as $itemIdToDelete) {
+				$item = SellItem::find($itemIdToDelete);
+				Product::where('id', $item->product_id)->increment('quantity', $item->quantity); // Restore stock
+				$item->delete();
+			}
+
+			foreach ($request->items as $item) {
+				$unitCostBeforeTax = $item['unit_cost'] * (1 - ($item['discount_percent'] ?? 0) / 100);
+				$netCost = $unitCostBeforeTax;
+
+				$sellItemData = [
+					'product_id' => $item['product_id'],
+					'quantity' => $item['quantity'],
+					'unit_cost_before_tax' => $item['unit_cost'],
+
+
+					'tax_amount' => $item['tax_amount'] ?? 0,
+					'net_cost' => $item['net_cost'],
+
+				];
+
+				if (isset($item['id'])) {
+					// Update existing item
+					$existingItem = SellItem::find($item['id']);
+					Product::where('id', $existingItem->product_id)->increment('quantity', $existingItem->quantity); // Restore old stock
+					$existingItem->update($sellItemData);
+					Product::where('id', $item['product_id'])->decrement('quantity', $item['quantity']);
+				} else {
+					// Create new item
+					$sell->items()->create($sellItemData);
+					Product::where('id', $item['product_id'])->decrement('quantity', $item['quantity']);
+				}
+			}
+			// Update or create shipping details
+			$trakingNumber = strtoupper(bin2hex(random_bytes(15)));
+			if ($request->filled('shipping_address')) {
+				$sell->shippingDetail()->updateOrCreate([], [
+					'shipping_address' => $request->shipping_address,
+					'shipping_method' => $request->shipping_method,
+					'shipping_cost' => $request->shipping_cost,
+					'expected_delivery_date' => $request->expected_delivery_date,
+					'tracking_number' => $trakingNumber,
+					'shipping_status' => $request->shipping_status,
+				]);
+			} else {
+				$sell->shippingDetail()->delete(); // Delete shipping details if not provided
+			}
+			// Update or create advance payment
+			$sell->payments()->updateOrCreate(
+				['amount' => $request->advance_balance],
+				[
+
+
+					'paid_on' => now(),
+					'payment_method' => $request->payment_method,
+					'payment_account' => $request->payment_account,
+					'payment_status' => 'completed',
+				]
+			);
+			// In your controller:
+			$updatedTransaction = $this->transactionService->updateTransaction(
+				$sell->id,
+				'income',
+				$advanceBalance,
+				'Sales',
+				'Sales Record for ' . $sell->id,
+				Auth::id()
+			);
+
+			if (!$updatedTransaction) {
+				return response()->json(['error' => 'Could not update transaction.'], 500);
+			}
+
+			DB::commit();
+			$sell->load('items', 'payments', 'shippingDetail');
+
+
+			return $this->success(['id' => $sell->id], 'Sell updated successfully');
+		} catch (\Exception $e) {
+			DB::rollBack();
+			if (isset($documentPath) && $request->hasFile('document')) {
+				Storage::delete($documentPath);
+			}
+			return $this->error('Something Went Wrong : ', $e->getMessage(), 500);
+		}
+	}
+
+
+	/**
+	 * Remove the specified resource from storage.
+	 */
+	public function destroy($id) {
+		try {
+			DB::beginTransaction();
+
+			// Find the purchase
+			$sell = Sell::with(['items', 'shippingDetail', 'payments'])->findOrFail($id);
+
+			$deleted = $this->transactionService->deleteTransaction(
+				$id,
+				'income',
+				Auth::id()
+			);
+
+
+			// Revert stock changes for each sell item
+			foreach ($sell->items as $item) {
+				Product::where('id', $item->product_id)
+					->decrement('quantity', $item->quantity);
+			}
+
+			// Delete the document if exists
+			if ($sell->document_path) {
+				Storage::delete($sell->document_path);
+			}
+
+			// Delete related records
+			$sell->items()->delete();
+			$sell->shippingDetail()->delete();
+			$sell->payments()->delete();
+
+			// Delete the sell
+			$sell->delete();
+
+			DB::commit();
+
+			return response()->json(['success' => true, 'message' => 'Purchase deleted successfully']);
+		} catch (\Exception $e) {
+			DB::rollBack();
+
+			return $this->error('Something Went Wrong : ', $e->getMessage(), 500);
+		}
+	}
+
+
+	public function downloadInvoice($id) {
+		$expense = Sell::with(['store', 'user', 'contact'])->findOrFail($id);
+
+		// Generate PDF using a view file, e.g., 'invoices.invoice-pdf'
+		$pdf = PDF::loadView('invoices.sell-invoice-pdf', compact('sell'));
+
+		return $pdf->download("sell-invoice_{$id}.pdf");
+	}
+
+	/**
+	 * Show the invoice in a modal.
+	 */
+	public function showInvoice($id) {
+		// Ensure you are retrieving a model instance with its relationships loaded
+		$sell = Sell::with(['store', 'contact', 'items', 'items.product', 'shippingDetail'])->findOrFail($id);
+
+		return view('admin.sell.invoice-modal', compact('sell'))->render();
+	}
+
+	protected function calculateTotalBeforeTax($items) {
+		if (is_string($items)) {
+			$items = json_decode($items, true);
+		}
+
+		return collect($items)->sum(function ($item) {
+			$quantity = floatval($item['quantity'] ?? 0);
+			$unitCost = floatval($item['unit_cost'] ?? 0);
+			$discountPercent = floatval($item['discount_percent'] ?? 0);
+
+			$costAfterDiscount = $unitCost * (1 - $discountPercent / 100);
+			return $quantity * $costAfterDiscount;
+		});
+	}
+
+	private function calculateDiscount($total, $discountType, $discountAmount, $discountPercentage) {
+		if (!$discountType) {
+			return 0;
+		}
+
+		if ($discountType === 'fixed') {
+			return ($total - ($discountPercentage ?? 0));
+		}
+
+		if ($discountType === 'percentage') {
+			return ($total * ($discountPercentage ?? 0)) / 100;
+		}
+
+		return 0;
+	}
+
+	private function calculateSellingPrice($netCost, $profitMargin) {
+		return $netCost * (1 + ($profitMargin / 100));
+	}
+}

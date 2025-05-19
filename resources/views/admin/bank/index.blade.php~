@@ -1,0 +1,99 @@
+@extends('layouts.admin')
+@section('title', 'Bank List')
+
+@push('style')
+	@include('import.css.datatable')
+@endpush
+
+@section('content')
+	<x-breadcumb title="Bank List"/>
+	<div class="table-responsive">
+		<div class="dashboard-card">
+			<div class="card-header-section">
+				<div class="table-title-section">
+					<div class="table-icon">
+						<i class="fas fa-university"></i>
+					</div>
+					<h5 class="table-title">Bank Accounts Overview</h5>
+				</div>
+				<div class="header-actions">
+					<button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#bankModal">
+						Add New Bank Account
+					</button>
+				</div>
+			</div>
+			<div class="table-responsive">
+				<table id="example2" class="table table-hover">
+					<thead>
+					<tr>
+						<th>SL</th>
+						<th>Store</th>
+						<th>Bank Name</th>
+						<th>Account Holder</th>
+						<th>Account Number</th>
+						<th>Balance</th>
+						<th>Action</th>
+					</tr>
+					</thead>
+					<tbody>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+
+@endsection
+
+@push('script')
+	@include('import.js.datatable')
+
+	<script>
+
+
+        loadTable();
+
+        function loadTable() {
+            const columns = [
+                {
+                    data: 'DT_RowIndex',
+                    name: 'DT_RowIndex',
+                    orderable: false,
+                    searchable: false
+                },
+                {
+                    data: 'store',
+                    name: 'store',
+                },
+                {
+                    data: 'bank_name',
+                    name: 'bank_name',
+                },
+                {
+                    data: 'account_holder_name',
+                    name: 'account_holder_name',
+                },
+                {
+                    data: 'account_number',
+                    name: 'account_number',
+                },
+                {
+                    data: 'current_balance',
+                    name: 'current_balance',
+                },
+
+                {
+                    data: 'action',
+                    name: 'action',
+                    orderable: false,
+                    searchable: false
+                }
+            ];
+            initDataTable(
+                '#example2',
+                '{{ route($role . 'banks.index') }}',
+                columns
+            );
+        }
+
+	</script>
+@endpush

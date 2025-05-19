@@ -1,0 +1,101 @@
+
+@extends('layouts.admin')
+@section('title', 'Account Transactions')
+
+@push('style')
+	@include('import.css.datatable')
+@endpush
+
+@section('content')
+	<x-breadcumb title="Account Transactions"/>
+	<div class="table-responsive">
+		<div class="dashboard-card">
+			<div class="card-header-section">
+				<div class="table-title-section">
+					<div class="table-icon">
+						<i class="fas fa-exchange-alt"></i>
+					</div>
+					<h5 class="table-title">Transaction History</h5>
+				</div>
+			</div>
+			<div class="table-responsive">
+				<table id="example2" class="table table-hover">
+					<thead>
+					<tr>
+						<th>SL</th>
+						<th>Transaction ID</th>
+						<th>Store</th>
+						<th>Type</th>
+						<th>Source</th>
+						<th>Amount</th>
+						<th>Date</th>
+						<th>Created By</th>
+						<th>Action</th>
+					</tr>
+					</thead>
+					<tbody>
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+@endsection
+
+@push('script')
+	@include('import.js.datatable')
+
+	<script>
+        loadTable();
+
+        function loadTable() {
+            const columns = [
+                {
+                    data: 'DT_RowIndex',
+                    name: 'DT_RowIndex',
+                    orderable: false,
+                    searchable: false
+                },
+                {
+                    data: 'transaction_id',
+                    name: 'transaction_id',
+                },
+                {
+                    data: 'store',
+                    name: 'store.name',
+                },
+
+                {
+                    data: 'transaction_type',
+                    name: 'transaction_type',
+                },
+                {
+                    data: 'transaction_source',
+                    name: 'transaction_source',
+                },
+                {
+                    data: 'amount',
+                    name: 'amount',
+                },
+                {
+                    data: 'transaction_date',
+                    name: 'transaction_date',
+                },
+                {
+                    data: 'created_by',
+                    name: 'createdBy.name',
+                },
+                {
+                    data: 'action',
+                    name: 'action',
+                    orderable: false,
+                    searchable: false
+                }
+            ];
+            initDataTable(
+                '#example2',
+                '{{ route($role . 'account-transactions.index') }}',
+                columns
+            );
+        }
+	</script>
+@endpush

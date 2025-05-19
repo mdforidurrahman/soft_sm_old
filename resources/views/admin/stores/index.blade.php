@@ -1,0 +1,278 @@
+@extends('layouts.admin')
+@section('title', 'Stores List')
+
+@push('style')
+    @include('import.css.datatable')
+@endpush
+
+@section('content')
+    <x-breadcumb title="Stores List"/>
+    <div class="table-responsive">
+
+
+        <div class="dashboard-card">
+            <div class="card-header-section">
+                <div class="table-title-section">
+                    <div class="table-icon">
+                        <i class="fas fa-project-diagram"></i>
+                    </div>
+                    <h5 class="table-title">Stores Overview</h5>
+                </div>
+                <div class="header-actions">
+                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#storeModal">
+                        Add New Store
+                    </button>
+
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table id="example2" class="table table-hover">
+                    <thead>
+                    <tr>
+
+                        <th>SL</th>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+
+
+
+    {{--     Add Modal  --}}
+    <div class="modal fade" id="storeModal" tabindex="-1" aria-labelledby="storeModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="storeModalLabel">Add New Store</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="storeForm">
+                        @csrf
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Store Name</label>
+                            <input type="text" class="form-control" id="name" name="name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Store Short Code</label>
+                            <input type="text" class="form-control" id="short_code" name="code" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="address" class="form-label">Address</label>
+                            <input type="text" class="form-control" id="address" name="address" required>
+                        </div>
+
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="submitForm()">Save Store</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{--     Edit Modal --}}
+    <div class="modal fade" id="editStoreModal" tabindex="-1" aria-labelledby="editStoreModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editStoreModalLabel">Edit Store</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editStoreForm">
+                        @csrf
+                        @method('PUT')
+                        <input type="hidden" id="editStoreId" name="id">
+                        <div class="mb-3">
+                            <label for="editName" class="form-label">Store Name</label>
+                            <input type="text" class="form-control" id="editName" name="name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editAddress" class="form-label">Address</label>
+                            <input type="text" class="form-control" id="editAddress" name="address" required>
+                        </div>
+
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="updateStore()">Update Store</button>
+                </div>
+            </div>
+        </div>
+    </div>
+@endsection
+
+@push('script')
+    @include('import.js.datatable')
+
+    <script>
+        function submitForm() {
+            $.ajax({
+                url: "{{ route($role . 'stores.store') }}",
+                method: 'POST',
+                data: $('#storeForm').serialize(),
+                headers: {
+                    'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+                },
+                success: function (response) {
+                    $('#storeModal').modal('hide');
+                    $('#storeForm')[0].reset();
+                    loadTable();
+                    AjaxNotifications.handle(response);
+                },
+                error: function (xhr) {
+                    let response = JSON.parse(xhr.responseText);
+                    if (xhr.status === 422) {
+                        // Validation errors
+                        let errorMessages = [];
+                        for (let field in response.errors) {
+                            errorMessages = errorMessages.concat(response.errors[field]);
+                        }
+                        AjaxNotifications.error(errorMessages.join('<br>'));
+                    } else {
+                        AjaxNotifications.error(response.message || 'An error occurred');
+                    }
+                    console.error('Error adding store:', response);
+                }
+            });
+        }
+
+        // Event binding for form submission
+        $('#storeForm').on('submit', function (e) {
+            e.preventDefault();
+            submitForm();
+        });
+
+        loadTable();
+
+        function loadTable() {
+
+
+            const columns = [
+                {
+                    data: 'DT_RowIndex',
+                    name: 'DT_RowIndex',
+                    orderable: false,
+                    searchable: false
+                },
+                {
+                    data: 'name',
+                    name: 'name',
+                    orderable: true,
+                },
+                {
+                    data: 'status',
+                    name: 'status'
+                },
+                {
+                    data: 'action',
+                    name: 'action',
+                    orderable: false,
+                    searchable: false
+                }
+            ];
+            initDataTable(
+                '#example2',
+                '{{ route($role . 'stores.index') }}',
+                columns
+            );
+        }
+
+        function openEditModal(editUrl) {
+            showLoader();
+            // console.log('Opening edit modal with URL:', editUrl);
+
+            $.ajax({
+                url: editUrl,
+                method: 'GET',
+                success: function (response) {
+                    // console.log('Received response:', response);
+
+                    if (response && typeof response === 'object') {
+                        $('#editStoreId').val(response.id);
+                        $('#editName').val(response.name);
+                        $('#editAddress').val(response.address);
+                        $('#editStatus').val(response.status);
+
+                        // console.log('Populated form fields:', {
+                        //     id: $('#editStoreId').val(),
+                        //     name: $('#editName').val(),
+                        //     address: $('#editAddress').val(),
+                        //     status: $('#editStatus').val()
+                        // });
+
+                        $('#editStoreModal').modal('show');
+                    } else {
+                        console.error('Invalid response format:', response);
+                        alert('Received invalid data from the server.');
+                    }
+
+                    hideLoader();
+                },
+                error: function (xhr, status, error) {
+                    console.error('Error fetching store data:', {
+                        status: status,
+                        error: error,
+                        responseText: xhr.responseText
+                    });
+                    hideLoader();
+                    alert('Error fetching store data. Please check the console for more information.');
+                }
+            });
+        }
+
+        function updateStore() {
+            showLoader();
+            const storeId = $('#editStoreId').val();
+            const updateUrl = "{{ route($role . 'stores.update', ':id') }}".replace(':id', storeId);
+
+            $.ajax({
+                url: updateUrl,
+                method: 'POST',
+                data: $('#editStoreForm').serialize(),
+                headers: {
+                    'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content')
+                },
+                success: function (response) {
+                    // console.log('Store updated successfully:', response);
+                    $('#editStoreModal').modal('hide');
+                    AjaxNotifications.handle(response);
+                    hideLoader();
+
+                    loadTable();
+                    // location.reload();
+
+                },
+                error: function (xhr, status, error) {
+                    console.error('Error updating store:', {
+                        status: status,
+                        error: error,
+                        responseText: xhr.responseText
+                    });
+                    hideLoader();
+                    if (xhr.responseJSON && xhr.responseJSON.errors) {
+                        let errorMessage = 'Validation errors:\n';
+                        for (let field in xhr.responseJSON.errors) {
+                            errorMessage += `${field}: ${xhr.responseJSON.errors[field].join(', ')}\n`;
+                        }
+                        AjaxNotifications.handle(response);
+                    } else {
+                        alert('Error updating store. Please try again.');
+                    }
+                }
+            });
+        }
+    </script>
+@endpush

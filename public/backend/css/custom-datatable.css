@@ -1,0 +1,144 @@
+
+/* Custom DataTable Styling */
+#example2 {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    margin: 15px 0;
+
+}
+
+#example2 thead th {
+    background-color: #f8fafc;
+    color: #475569;
+    font-weight: 600;
+    padding: 15px;
+    border: none;
+    border-bottom: 2px solid #e9ecef;
+    font-size: 0.9rem;
+    letter-spacing: 0.5px;
+
+}
+
+#example2 tbody td {
+    padding: 12px 15px;
+    border: none;
+    border-bottom: 1px solid #f1f5f9;
+    color: #475569;
+    font-size: 0.95rem;
+    vertical-align: middle;
+
+}
+
+#example2 tbody tr:hover {
+    background-color: #fafbff;
+
+}
+
+/* Export Buttons Styling */
+.dt-buttons {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.dt-button {
+    padding: 8px 15px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.3s ease;
+    background: #f8fafc;
+    color: #475569;
+}
+
+.dt-button:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+}
+
+.dt-button i {
+    font-size: 1rem;
+}
+
+/* Status Badge Enhanced */
+.status-badge {
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.status-active {
+    background-color: #dcfce7;
+    color: #166534;
+}
+
+.status-inactive {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+/* Search and Length Control Styling */
+.dataTables_wrapper .dataTables_length select {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 6px 30px 6px 12px;
+    background-color: #f8fafc;
+    font-size: 0.95rem;
+}
+
+.dataTables_wrapper .dataTables_filter input {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px 15px;
+    background-color: #f8fafc;
+    font-size: 0.95rem;
+    width: 250px;
+}
+
+.dataTables_wrapper .dataTables_filter input:focus {
+    outline: none;
+    border-color: #435ebe;
+    box-shadow: 0 0 0 3px rgba(67, 94, 190, 0.1);
+}
+
+/* Pagination Styling */
+.dataTables_wrapper .dataTables_paginate {
+    margin-top: 20px;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button {
+    padding: 8px 14px;
+    margin: 0 3px;
+    border-radius: 8px;
+    border: none;
+    font-weight: 500;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button.current {
+    background: #435ebe !important;
+    color: white !important;
+    border: none;
+}
+
+.dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+    background: #435ebe !important;
+    color: white !important;
+    border: none;
+}
+
+/* Loading State */
+.dataTables_processing {
+    background: rgba(255, 255, 255, 0.9) !important;
+    border-radius: 8px;
+    padding: 15px !important;
+    border: 1px solid #e2e8f0;
+}

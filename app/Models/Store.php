@@ -1,0 +1,84 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+
+class Store extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'name',
+        'address',
+        'status',
+        'created_by',
+        'updated_by'
+    ];
+
+    public function products()
+    {
+        return $this->hasMany(Product::class);
+    }
+
+    public function Expenses()
+    {
+        return $this->hasMany(Expense::class);
+    }
+
+    public function purchases()
+    {
+        return $this->hasMany(Purchase::class);
+    }
+
+    public function sells()
+    {
+        return $this->hasMany(Sell::class);
+    }
+
+
+    public function users()
+    {
+        return $this->belongsToMany(User::class, 'user_stores', 'store_id', 'user_id')
+            ->withPivot('role')
+            ->withTimestamps();
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updater()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function storeProducts()
+    {
+        return $this->hasMany(Product::class);
+    }
+
+    public function sentTransfers()
+    {
+        return $this->hasMany(ProductTransfer::class, 'from_store_id');
+    }
+
+    public function receivedTransfers()
+    {
+        return $this->hasMany(ProductTransfer::class, 'to_store_id');
+    }
+
+
+	public function account()
+	{
+		return $this->hasOne(Account::class);
+	}
+
+	public function bankAccount()
+	{
+		return $this->hasOne(BankAccount::class);
+	}
+
+}
